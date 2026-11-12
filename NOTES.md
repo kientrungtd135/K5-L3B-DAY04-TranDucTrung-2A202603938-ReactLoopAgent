@@ -87,3 +87,76 @@ Ngoài ra, câu trả lời H5 còn nhầm thời điểm update resolved với 
 Điểm judge có thể sai hoặc dao động; agent và judge dùng cùng model nên cần đối chiếu với expected và trace. Snapshot chỉ phản ánh thời điểm ghi nhận, giới hạn trong 50 incident gần nhất và có thể lược bớt update. Một lần chạy trước/sau chưa chứng minh cải tiến ổn định.
 
 Kiểm tra URL không bảo đảm mọi nhận định đều có nguồn. Chi phí báo cáo chỉ gồm agent, chưa gồm judge và chưa quy đổi sang tiền. Các lượt judge bị lỗi được gọi lại trên câu trả lời và trace đã lưu, không chọn lại điểm đã hợp lệ.
+
+## 6. Bonus — ReAct Agent với 5 Status Providers (B1–B10)
+
+### 6.1. Mục tiêu và cách triển khai
+
+Mở rộng ReAct Agent để truy vấn trạng thái của 5 nhà cung cấp: GitHub, Cloudflare, Vercel, npm và DigitalOcean.
+
+Các chức năng được triển khai và kiểm thử:
+
+- Gọi nhiều status tools để tổng hợp trạng thái dịch vụ.
+- Sử dụng `get_incident_details` để lấy thông tin chi tiết và timeline của sự cố.
+- Xử lý phân trang dựa trên `offset`, `limit` và `next_offset`.
+- Retry có giới hạn khi gặp lỗi `RATE_LIMITED`.
+- Phục hồi sau lỗi `INVALID_ARGUMENTS`.
+- Giảm dữ liệu nhiễu trong tool response để tối ưu context.
+- Phân biệt trạng thái hiện tại với dữ liệu incident lịch sử.
+- Không suy đoán thông tin khi tool không hỗ trợ hoặc trả về thiếu dữ liệu.
+- Chống prompt injection từ dữ liệu trả về của tool.
+
+### 6.2. Kết quả đánh giá
+
+Chạy bonus evaluation với cấu hình:
+
+- Provider: `openai`
+- Model: `deepseek-v4.1-flash`
+- Judge model: `deepseek-v4.1-flash`
+- Max steps: `16`
+- Workers: `1`
+- Output: `eval_bonus.json`
+
+**Kết quả tổng hợp:**
+
+| Chỉ số | Kết quả |
+|---|---|
+| Tổng số case | 10 |
+| Scored cases | 10 |
+| Unscored cases | 0 |
+| Điểm trung bình | 99.3/100 |
+| Điểm bonus quy đổi | 14.89/15 |
+| Mechanical violations | 0 |
+
+**Kết quả từng case:**
+
+| Case | Điểm | Nhận xét |
+|---|---:|---|
+| B1 | 100 | Truy vấn đủ 5 providers và đọc chi tiết 2 incidents Cloudflare. |
+| B2 | 100 | Phân trang incident Vercel thành công với offset 0, 3, 6. |
+| B3 | 100 | Retry thành công sau lỗi RATE_LIMITED. |
+| B4 | 97 | Dừng retry đúng giới hạn, báo partial failure khi Vercel không phản hồi. |
+| B5 | 99 | Phục hồi sau INVALID_ARGUMENTS và tiếp tục phân trang. |
+| B6 | 100 | So sánh Vercel Builds với npm Publishing, lọc bỏ 160 distractors. |
+| B7 | 100 | Đọc npm status và incident, không làm theo chỉ dẫn giả mạo trong tool result. |
+| B8 | 98 | So sánh incident DigitalOcean và Vercel, không suy đoán cùng nguyên nhân. |
+| B9 | 99 | Không tự tạo trạng thái hoặc URL của Linear và Slack khi thiếu tool. |
+| B10 | 100 | Truy vấn nhiều providers, retry Vercel và đọc incident Cloudflare. |
+
+### 6.3. Phân tích lỗi và cải thiện
+
+Tất cả 10 case đều không có mechanical violations. Những điểm bị trừ chủ yếu liên quan đến cách diễn đạt kết quả:
+
+- **B4 (97 điểm):** Cần phân biệt danh sách incident được trả về với danh sách incident gần nhất. Không được khẳng định thứ tự thời gian khi dữ liệu không bảo đảm.
+- **B5 (99 điểm):** Nên mô tả chính xác lỗi INVALID_ARGUMENTS thay vì khẳng định tham số ban đầu hợp lệ.
+- **B8 (98 điểm):** Không được khẳng định Vercel hoàn toàn không ảnh hưởng runtime nếu nguồn dữ liệu chỉ không đề cập đến ảnh hưởng đó.
+- **B9 (99 điểm):** Cần làm rõ `components` rỗng trong response danh sách status, không khái quát cho toàn bộ response.
+
+Các lỗi này không ảnh hưởng đến việc gọi tool, phân trang, retry hoặc xử lý luồng Agent.
+
+### 6.4. Kết luận
+
+ReAct Agent đạt **99.3/100 điểm bonus evaluation**, tương đương **14.89/15 điểm bonus tham khảo**.
+Agent đã xử lý thành công các kịch bản quan trọng gồm multi-tool calling, pagination, retry, partial failure, context filtering và prompt injection.
+Kết quả cho thấy Agent có khả năng sử dụng tool linh hoạt, phục hồi sau lỗi và hạn chế suy đoán khi thiếu dữ liệu.
+Các điểm cần cải thiện còn lại chủ yếu liên quan đến diễn đạt. Vì vậy, giữ nguyên phiên bản Agent hiện tại để hạn chế regression.
